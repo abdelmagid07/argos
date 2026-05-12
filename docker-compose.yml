@@ -1,10 +1,13 @@
 # Argos local infrastructure services.
 #
-# Services: Redis (online features), Zookeeper + Kafka (streaming ingest).
+# Services: Redis (online features), Zookeeper + Kafka (streaming ingest),
+#           api (the FastAPI prediction service — built from ./Dockerfile).
 #
-# Bring up:    docker compose up -d
-# Tear down:   docker compose down
-# Status:      docker compose logs -f kafka
+# Bring up everything:   docker compose up -d
+# Bring up infra only:   docker compose up -d redis zookeeper kafka
+# Rebuild API image:     docker compose build api
+# API logs:              docker compose logs -f api
+# Tear down:             docker compose down
 
 services:
   zookeeper:
@@ -65,4 +68,25 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    restart: unless-stopped
+
+  api:
+    # Build from the Dockerfile in this repo. Image tag is `argos-api:dev`
+    # so the same image name works in `docker run` and future k8s manifests.
+    build: .
+    image: argos-api:dev
+    container_name: argos-api
+    ports:
+      - "8000:8000"
+    # Pull DATABASE_URL / KAFKA_* / etc. from the host .env file.
+    env_file:
+      - .env
+    environment:
+      # Inside the docker network, the redis service is reachable as
+      # `redis:6379` regardless of what host port we mapped above. Override
+      # whatever the user has in .env (which points at localhost:6380).
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped

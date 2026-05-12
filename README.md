@@ -154,6 +154,46 @@ other broker bound there first.
 Direct CSV ingest (`python -m src.ingest`) still works and does **not** require
 Kafka — pick one path per environment.
 
+## Quickstart — Docker (containerized API)
+
+Bundles the FastAPI service into an image so it runs identically anywhere — and
+gives us the building block for the Kubernetes step.
+
+Prerequisite: you've already trained at least once, so `models/` contains
+`fraud_detector_v1.pt`, `scaler.pkl`, and `feature_columns.json`. The build
+will fail loudly if any of those are missing.
+
+1. Build + run via compose. This also pulls Redis up if it isn't already:
+   ```bash
+   docker compose up -d --build api
+   docker compose ps    # argos-api should report (healthy) after ~20-30s
+   ```
+2. Hit it on the host — same port (`8000`) as the local uvicorn path:
+   ```bash
+   curl http://localhost:8000/health
+   curl -X POST http://localhost:8000/predict \
+     -H 'Content-Type: application/json' \
+     -d '{"user_id": 1234, "merchant_id": 42, "amount": 250.0}'
+   ```
+3. Or run the whole pipeline end-to-end with the container as the server:
+   ```bash
+   python run_all.py --via-docker
+   ```
+4. Tear down: `docker compose stop api` (or `docker compose down` for everything).
+
+Container details worth knowing:
+
+- **Image tag:** `argos-api:dev` (also reused by future k8s manifests).
+- **CPU-only torch wheel** is installed during the build to keep the image at
+  ~600MB instead of ~2GB.
+- **Non-root** user (`argos`) at runtime.
+- **`REDIS_URL` is overridden** inside the container to
+  `redis://redis:6379` so it talks to the Redis service over the compose
+  network — `localhost:6380` only works from your host shell.
+- **`DATABASE_URL`** is read from `.env` (or compose's env_file) unchanged;
+  Supabase URLs work from inside the container because they're just external
+  DNS names.
+
 ## API
 
 ```bash
@@ -187,7 +227,9 @@ argos/
 ├── PROJECT.md             # full production target
 ├── README.md              # this file
 ├── requirements.txt
-├── docker-compose.yml     # local infra services (Redis today, Kafka soon)
+├── Dockerfile             # API image (CPU torch, non-root, healthcheck)
+├── .dockerignore
+├── docker-compose.yml     # local infra services + the API container
 ├── run_all.py             # one-shot end-to-end test runner
 ├── schema.sql             # Postgres DDL for Supabase SQL editor
 ├── .env.example           # template; copy to .env and fill in URLs
@@ -217,9 +259,9 @@ Each stage swaps **one** component without touching the others.
 2. **Postgres / Supabase** — `src/db.py` selects backend via `DATABASE_URL`; SQLite still works offline. ✅
 3. **Redis online store** — `src/feature_store.py` is a factory; `REDIS_URL` switches to `RedisFeatureStore`. ✅
 4. **Kafka** — `src/kafka_ingest/` producer + consumer → same `raw_transactions` schema; optional vs `src.ingest`. ✅
-5. **Spark** — replace pandas in `features.py` with a Spark job that reads/writes Postgres.
-6. **Docker** — wrap `serve.py` in a Dockerfile.
-7. **Kubernetes** — deployment + HPA + service.
-8. **Prometheus / Grafana** — replace `/stats` with `prometheus_client` instrumentation.
+5. **Spark** — *(deferred)* swap pandas in `features.py` for a Spark job. Parked because on this data size Spark would be slower than pandas, and Spark-on-Windows setup is painful. Will revisit if/when scaling demands it.
+6. **Docker** — `Dockerfile` + `argos-api:dev` image + compose `api` service; `python run_all.py --via-docker` runs the whole pipeline with the containerized API. ✅
+7. **Kubernetes** — deployment + HPA + service for the `argos-api:dev` image.
+
 
 

@@ -1,0 +1,47 @@
+# Keep the build context small and never bake secrets into the image.
+# .dockerignore != .gitignore; we list things even if git already ignores them.
+
+# Version control
+.git/
+.gitattributes
+.gitignore
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local data & databases (rebuilt at training time, never shipped)
+data/
+*.db
+*.db-journal
+logs/
+*.log
+
+# Secrets — never ship these inside an image
+.env
+.env.local
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Project artifacts not needed at runtime
+notebooks/
+PROJECT.md
+README.md
+run_all.py
+docker-compose.yml
+Dockerfile
+.dockerignore
+schema.sql
+.env.example

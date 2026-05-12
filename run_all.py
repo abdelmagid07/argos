@@ -8,7 +8,8 @@ Pipeline (default):
     ingest -> features -> sync_to_redis -> train -> serve -> smoke_test
 
 Examples:
-    python run_all.py                          # full pipeline
+    python run_all.py                          # full pipeline (uvicorn on host)
+    python run_all.py --via-docker             # build image + run API in a container
     python run_all.py --synthetic --reset      # rebuild from synthetic data
     python run_all.py --skip train             # reuse last model
     python run_all.py --only smoke_test        # assumes a server is up
@@ -53,6 +54,12 @@ def section(title: str) -> None:
 def run(cmd: list[str]) -> None:
     print(f"$ {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, cwd=ROOT, check=True)
+
+
+def run_no_check(cmd: list[str]) -> int:
+    """Like run() but swallow non-zero exits — for best-effort cleanup paths."""
+    print(f"$ {' '.join(cmd)}", flush=True)
+    return subprocess.run(cmd, cwd=ROOT, check=False).returncode
 
 
 def wait_for_health(url: str, timeout: float = 60.0) -> bool:
@@ -106,8 +113,9 @@ def stage_train(args) -> None:
     run(cmd)
 
 
-def stage_serve_and_smoke(args) -> None:
-    section("Stage 5: serve + smoke_test")
+def stage_serve_local(args) -> None:
+    """Default serve stage: uvicorn on the host."""
+    section("Stage 5: serve (uvicorn on host) + smoke_test")
     serve_cmd = [
         PY, "-m", "uvicorn", "src.serve:app",
         "--port", str(args.port),
@@ -138,6 +146,49 @@ def stage_serve_and_smoke(args) -> None:
                 server.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 server.kill()
+
+
+def stage_serve_via_docker(args) -> None:
+    """Build the API image, run it via docker compose, smoke-test, tear down.
+
+    Same /predict contract as the local path — just packaged differently.
+    docker-compose.yml already wires the api service to the redis service
+    over the internal network (REDIS_URL is overridden inside the container).
+    """
+    section("Stage 5: serve (docker container) + smoke_test")
+    # 1. Build (cached layers make rebuilds fast).
+    run(["docker", "compose", "build", "api"])
+    # 2. Start the api service. depends_on pulls redis up too if needed.
+    run(["docker", "compose", "up", "-d", "api"])
+
+    try:
+        health_url = f"http://localhost:{args.port}/health"
+        print(f"waiting for {health_url} ...", flush=True)
+        # Cold container start (importing torch + loading the model + feature
+        # store sync) can take 20-30s on first boot, so give it 120s.
+        if not wait_for_health(health_url, timeout=120):
+            run_no_check(["docker", "compose", "logs", "--tail", "120", "api"])
+            raise SystemExit("api container failed to become healthy within 120s")
+
+        run([
+            PY, "-m", "src.smoke_test",
+            "--host", f"http://localhost:{args.port}",
+            "--requests", str(args.requests),
+        ])
+
+        if args.keep_server:
+            print("\napi container left running. Stop with: docker compose stop api")
+    finally:
+        if not args.keep_server:
+            run_no_check(["docker", "compose", "stop", "api"])
+
+
+def stage_serve(args) -> None:
+    """Dispatcher: pick local-uvicorn or docker path based on --via-docker."""
+    if args.via_docker:
+        stage_serve_via_docker(args)
+    else:
+        stage_serve_local(args)
 
 
 # ---------------------------------------------------------------------------
@@ -176,11 +227,6 @@ def stage_serve_and_smoke(args) -> None:
 #     ])
 #
 #
-# def stage_docker_build(args) -> None:
-#     section("Stage 6: build API container image")
-#     run(["docker", "build", "-t", "argos-api:v1", "-f", "api/Dockerfile", "."])
-#
-#
 # def stage_k8s_deploy(args) -> None:
 #     section("Stage 7: kubernetes apply")
 #     run(["kind", "load", "docker-image", "argos-api:v1", "--name", "argos"])
@@ -201,6 +247,41 @@ def stage_serve_and_smoke(args) -> None:
 #     run(["locust", "-f", "load_test/locustfile.py",
 #          "--host", f"http://localhost:{args.port}"])
 
+#
+#
+# ---------------------------------------------------------------------------
+# UI / dashboard options (parked for later) — none of these are implemented.
+# Pick one when ready to put a front end on Argos. Order is roughly
+# "smallest scope" -> "largest scope".
+# ---------------------------------------------------------------------------
+#
+# OPTION A — Static demo dashboard (recommended first cut, ~4-6 hours)
+#     A single-page UI (React or HTMX) that talks to FastAPI:
+#       - dropdown of real user_ids from user_features
+#       - GET /features/{user_id} (new endpoint) shows precomputed features
+#       - form for amount/merchant_id/type -> POST /predict
+#       - visualizes fraud_score, risk_label, feature contributions
+#       - small widget polling /stats for live p50/p95/p99 latency
+#     Honest about what Argos is (a backend service) and demos the stack in 90s.
+#     Frontend host: Vercel or Netlify (free). API: Render/Fly (free tier).
+#
+# OPTION B — Live throughput simulation (the "wow" demo, ~8-10 hours)
+#     OPTION A plus:
+#       - "Start stream" button kicks off the Kafka producer at high rate
+#       - WebSocket from FastAPI streams scored transactions to the UI
+#       - tape view scrolls live transactions color-coded by risk
+#       - live counters: req/sec, fraud rate, latency histogram
+#     This is the version worth recording a 30-second video of.
+#     Requires: WebSocket support in serve.py, a frontend chart lib.
+#
+# OPTION C — Internal fraud-ops admin dashboard (most "real", ~12-16 hours)
+#     What an actual fraud team would use day-to-day:
+#       - recent predictions table with filters (risk, amount, time window)
+#       - per-user drilldown ("show me everything user 12345 did")
+#       - manual review queue: analyst marks fraud/not-fraud
+#       - feedback loop: marked labels feed back into the training set
+#     Only worth it for fraud-specific job applications.
+#
 
 # ---------------------------------------------------------------------------
 # Wiring
@@ -211,11 +292,10 @@ STAGE_HANDLERS = {
     "features": stage_features,
     "sync_to_redis": stage_sync_to_redis,
     "train": stage_train,
-    "serve": stage_serve_and_smoke,
+    "serve": stage_serve,  # dispatches to local uvicorn or docker container
     # As you uncomment future stages above, also register them here, e.g.:
     # "kafka": stage_kafka_streaming,
     # "spark": stage_spark,
-    # "docker": stage_docker_build,
     # "k8s": stage_k8s_deploy,
     # "prometheus": stage_prometheus,
     # "locust": stage_locust,
@@ -254,6 +334,10 @@ def parse_args() -> argparse.Namespace:
                    help="Skip the serve+smoke stage (data pipeline only).")
     p.add_argument("--keep-server", action="store_true",
                    help="Leave the API running after smoke_test.")
+    p.add_argument("--via-docker", action="store_true",
+                   help="Run the API inside a Docker container (image: argos-api:dev) "
+                        "via docker compose, instead of uvicorn on the host. Requires "
+                        "Docker Desktop running and models/ already trained.")
 
     return p.parse_args()
 
