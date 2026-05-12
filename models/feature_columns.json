@@ -1,0 +1,13 @@
+[
+  "amount",
+  "user_avg_amount",
+  "user_total_txns",
+  "user_fraud_rate",
+  "velocity_24h",
+  "unique_merchants",
+  "unique_countries",
+  "merchant_fraud_rate",
+  "merchant_avg_amount",
+  "merchant_total_txns",
+  "merchant_id"
+]
