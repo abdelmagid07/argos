@@ -29,7 +29,7 @@ from src.config import (
     MODEL_PATH,
     SCALER_PATH,
 )
-from src.feature_store import FeatureStore
+from src.feature_store import FeatureStore, load_feature_store
 from src.model import FraudDetector
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -97,9 +97,9 @@ class _State:
         else:
             self.feature_columns = FEATURE_COLUMNS
 
-        self.store = FeatureStore.load()
-        log.info("State loaded. model_version=%s feature_dim=%d",
-                 self.model_version, input_dim)
+        self.store = load_feature_store()
+        log.info("State loaded. model_version=%s feature_dim=%d backend=%s",
+                 self.model_version, input_dim, self.store.backend_name)
 
     def record(self, *, label: str, latency_ms: float,
                missing_user: bool, missing_merchant: bool) -> None:
@@ -143,11 +143,13 @@ def _risk_label(score: float) -> str:
 
 @app.get("/health")
 def health() -> dict:
+    store = STATE.store
     return {
         "status": "ok",
         "model_loaded": STATE.model is not None,
-        "users_in_store": len(STATE.store.users) if STATE.store else 0,
-        "merchants_in_store": len(STATE.store.merchants) if STATE.store else 0,
+        "feature_store": store.backend_name if store else "none",
+        "users_in_store": store.num_users if store else 0,
+        "merchants_in_store": store.num_merchants if store else 0,
     }
 
 

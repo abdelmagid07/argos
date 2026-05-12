@@ -1,0 +1,33 @@
+# Argos local infrastructure services.
+#
+# Current: Redis (online feature store).
+# Soon:  Kafka + Zookeeper (streaming ingest) will join here.
+#
+#
+# Bring up:    docker compose up -d
+# Tear down:   docker compose down
+# Status:      docker compose ps
+# Logs:        docker compose logs -f redis
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: argos-redis
+    ports:
+      - "6380:6379"
+    # maxmemory-policy: when the cache fills up, evict the least-recently-used
+    # key. 
+    command:
+      - redis-server
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped

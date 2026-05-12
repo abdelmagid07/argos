@@ -17,6 +17,9 @@ pydantic
 psycopg2-binary
 SQLAlchemy
 
+# Online feature store 
+redis
+
 # Misc
 python-dotenv
 httpx  # used by smoke_test.py
