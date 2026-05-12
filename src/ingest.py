@@ -166,7 +166,7 @@ def write_to_db(df: pd.DataFrame, reset: bool = False) -> int:
 
         # Convert numpy/pandas scalar types to native Python so psycopg2 and
         # sqlite3 don't choke on numpy.int64 etc.
-        rows = [tuple(map(_to_python, r)) for r in df[COLUMNS].itertuples(index=False, name=None)]
+        rows = [tuple(map(to_python_scalar, r)) for r in df[COLUMNS].itertuples(index=False, name=None)]
         return db.bulk_insert_ignore_conflicts(
             conn,
             table="raw_transactions",
@@ -176,11 +176,31 @@ def write_to_db(df: pd.DataFrame, reset: bool = False) -> int:
         )
 
 
-def _to_python(v):
-    """psycopg2 understands native Python ints/floats but not numpy scalars."""
+def to_python_scalar(v):
+    """Convert numpy/pandas scalars to native Python for DB drivers."""
     if hasattr(v, "item"):
         return v.item()
     return v
+
+
+def load_transactions_dataframe(
+    *,
+    synthetic: bool = False,
+    rows: Optional[int] = None,
+) -> pd.DataFrame:
+    """Load the same transaction rows `main()` would ingest.
+
+    Used by the Kafka producer so CSV → topic → consumer reproduces the same
+    schema as `python -m src.ingest` without duplicating mapping logic.
+    """
+    use_real = IEEE_CIS_CSV.exists() and not synthetic
+    if use_real:
+        return _load_real(rows)
+    if not synthetic and not IEEE_CIS_CSV.exists():
+        log.warning(
+            "IEEE-CIS CSV not found at %s — using synthetic data.", IEEE_CIS_CSV
+        )
+    return _load_synthetic(rows or 100_000)
 
 
 def main() -> None:
@@ -195,14 +215,7 @@ def main() -> None:
                              "logic has changed.")
     args = parser.parse_args()
 
-    use_real = IEEE_CIS_CSV.exists() and not args.synthetic
-    if use_real:
-        df = _load_real(args.rows)
-    else:
-        if not args.synthetic and not IEEE_CIS_CSV.exists():
-            log.warning("IEEE-CIS CSV not found at %s — using synthetic data.",
-                        IEEE_CIS_CSV)
-        df = _load_synthetic(args.rows or 100_000)
+    df = load_transactions_dataframe(synthetic=args.synthetic, rows=args.rows)
 
     backend = db.describe()
     log.info("Writing %d rows to %s backend", len(df), backend["backend"])

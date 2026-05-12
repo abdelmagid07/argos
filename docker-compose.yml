@@ -1,15 +1,50 @@
 # Argos local infrastructure services.
 #
-# Current: Redis (online feature store).
-# Soon:  Kafka + Zookeeper (streaming ingest) will join here.
-#
+# Services: Redis (online features), Zookeeper + Kafka (streaming ingest).
 #
 # Bring up:    docker compose up -d
 # Tear down:   docker compose down
-# Status:      docker compose ps
-# Logs:        docker compose logs -f redis
+# Status:      docker compose logs -f kafka
 
 services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: argos-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: argos-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      # Host apps (producer.py on your laptop) connect via localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "kafka-broker-api-versions",
+          "--bootstrap-server",
+          "localhost:9092",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     container_name: argos-redis

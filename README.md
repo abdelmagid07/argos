@@ -9,8 +9,13 @@ Supabase, Kubernetes, Prometheus) is layered in over later stages — see
 ## Architecture
 
 ```
-[CSV or synthetic]  →  src/ingest.py        →  raw_transactions
-                                                 ↓
+[CSV or synthetic]  →  src/ingest.py  ────────────────────────────┐
+      │                                                             │
+      └──── optional Kafka path ─→  Kafka topic `transactions`      │
+                      │                                             │
+                      └── src.kafka_ingest.consumer → raw_transactions
+                                                                  │
+                                                                  ▼
                        src/features.py      →  user_features, merchant_features  (offline)
                                                  ↓
                        src/sync_to_redis.py →  Redis hashes                       (online cache)
@@ -20,12 +25,16 @@ Supabase, Kubernetes, Prometheus) is layered in over later stages — see
                        src/serve.py         →  FastAPI /predict on :8000
 ```
 
+Either **batch ingest** (`python -m src.ingest`) or **streaming ingest**
+(`producer` → Kafka → `consumer`) lands in `raw_transactions`; downstream
+is identical.
+
 Backends are pluggable:
 
 | Layer | Default | Override |
 |---|---|---|
 | Offline tables | SQLite (`argos.db`) | `DATABASE_URL=postgresql://...` → Supabase |
-| Online cache | In-memory dict | `REDIS_URL=redis://localhost:6379` → Redis |
+| Online cache | In-memory dict | `REDIS_URL=redis://localhost:6380` → Redis (host port from [`docker-compose.yml`](docker-compose.yml)) |
 
 All backend selection happens in `src/db.py` and `src/feature_store.py`.
 Every other script is backend-agnostic, so the API code is the same whether
@@ -42,14 +51,23 @@ python -m venv .venv
 # source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2-5. Pipeline (SQLite is automatic if DATABASE_URL is not set)
+# 2. Run the whole pipeline end-to-end (ingest -> features -> [sync_to_redis] -> train -> serve -> smoke_test).
+python run_all.py
+# Useful variants:
+#   python run_all.py --synthetic --reset    # rebuild from synthetic data
+#   python run_all.py --skip train           # reuse last model
+#   python run_all.py --no-server            # data pipeline only
+#   python run_all.py --keep-server          # leave the API running at the end
+```
+
+Manual equivalent (handy if you want to run a single stage):
+
+```bash
 python -m src.ingest
 python -m src.features
 python -m src.train
 uvicorn src.serve:app --port 8000
-
-# 6. (in another terminal) smoke test
-python -m src.smoke_test --requests 200
+python -m src.smoke_test --requests 200       # in another terminal
 ```
 
 To train on real data, drop `train_transaction.csv` from the
@@ -86,7 +104,8 @@ Docker Desktop running.
    docker compose up -d redis
    docker compose ps    # should show argos-redis as healthy
    ```
-2. Add `REDIS_URL=redis://localhost:6379` to your `.env`.
+2. Add `REDIS_URL=redis://localhost:6380` to your `.env` (or whatever host port
+   [`docker-compose.yml`](docker-compose.yml) maps to Redis).
 3. Sync the latest feature tables into Redis (run after `features.py`):
    ```bash
    python -m src.sync_to_redis
@@ -102,6 +121,38 @@ The cache uses a 1-hour TTL (override with `--ttl`). Rerun `sync_to_redis`
 whenever you want fresh aggregates; the API picks them up immediately.
 
 To go back to the in-memory store, comment out `REDIS_URL` and restart.
+
+## Quickstart — Kafka streaming ingest
+
+Requires Docker (Zookeeper + Kafka). Uses **port 9092** on the host — stop any
+other broker bound there first.
+
+1. Start infra:
+   ```bash
+   docker compose up -d zookeeper kafka
+   docker compose ps    # wait until argos-kafka is healthy (~40s first boot)
+   ```
+2. Install deps: `pip install -r requirements.txt` (pulls `kafka-python`).
+3. Optional `.env` entries — defaults match [`docker-compose.yml`](docker-compose.yml):
+   `KAFKA_BOOTSTRAP_SERVERS=localhost:9092`, `KAFKA_TOPIC=transactions`,
+   `KAFKA_DLQ_TOPIC=transactions-dlq`.
+
+4. **Terminal A — consumer** (writes to the same DB as `src.ingest`):
+   ```bash
+   python -m src.kafka_ingest.consumer
+   ```
+
+5. **Terminal B — producer** (reads IEEE-CIS CSV or `--synthetic`):
+   ```bash
+   python -m src.kafka_ingest.producer
+   # or a smaller demo:
+   python -m src.kafka_ingest.producer --synthetic --rows 5000
+   ```
+
+6. Continue the pipeline as usual: `features` → `train` → `sync_to_redis` → `serve`.
+
+Direct CSV ingest (`python -m src.ingest`) still works and does **not** require
+Kafka — pick one path per environment.
 
 ## API
 
@@ -137,12 +188,14 @@ argos/
 ├── README.md              # this file
 ├── requirements.txt
 ├── docker-compose.yml     # local infra services (Redis today, Kafka soon)
+├── run_all.py             # one-shot end-to-end test runner
 ├── schema.sql             # Postgres DDL for Supabase SQL editor
 ├── .env.example           # template; copy to .env and fill in URLs
 ├── data/                  # raw inputs (CSV); gitignored
 ├── models/                # trained artifacts; gitignored
 ├── argos.db               # SQLite store; gitignored
 └── src/
+    ├── kafka_ingest/      # Kafka producer / consumer / topic bootstrap
     ├── config.py          # paths, feature order
     ├── db.py              # offline backend selector (SQLite ↔ Postgres)
     ├── ingest.py          # CSV → DB (synthetic fallback)
@@ -163,7 +216,7 @@ Each stage swaps **one** component without touching the others.
 1. **MVP** — SQLite, in-memory store, single uvicorn process. ✅
 2. **Postgres / Supabase** — `src/db.py` selects backend via `DATABASE_URL`; SQLite still works offline. ✅
 3. **Redis online store** — `src/feature_store.py` is a factory; `REDIS_URL` switches to `RedisFeatureStore`. ✅
-4. **Kafka** — replace direct CSV ingest with a Kafka producer/consumer pair writing to Postgres.
+4. **Kafka** — `src/kafka_ingest/` producer + consumer → same `raw_transactions` schema; optional vs `src.ingest`. ✅
 5. **Spark** — replace pandas in `features.py` with a Spark job that reads/writes Postgres.
 6. **Docker** — wrap `serve.py` in a Dockerfile.
 7. **Kubernetes** — deployment + HPA + service.
