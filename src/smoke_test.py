@@ -8,29 +8,34 @@ from __future__ import annotations
 
 import argparse
 import random
-import sqlite3
 import statistics
 import sys
 import time
 
 import httpx
+from sqlalchemy import text
 
-from src.config import DB_PATH
+from src import db
 
 
 def sample_real_keys(n: int) -> list[tuple[int, int]]:
     """Pull (user_id, merchant_id) pairs that actually exist in the feature
-    store so we exercise the warm path, not just cold-start."""
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        users = [r[0] for r in conn.execute(
-            "SELECT user_id FROM user_features ORDER BY RANDOM() LIMIT ?", (n,)
-        )]
-        merchants = [r[0] for r in conn.execute(
-            "SELECT merchant_id FROM merchant_features ORDER BY RANDOM() LIMIT ?", (n,)
-        )]
-    finally:
-        conn.close()
+    store so we exercise the warm path, not just cold-start.
+    """
+    engine = db.get_engine()
+    with engine.connect() as conn:
+        users = [
+            r[0] for r in conn.execute(
+                text("SELECT user_id FROM user_features ORDER BY RANDOM() LIMIT :n"),
+                {"n": n},
+            )
+        ]
+        merchants = [
+            r[0] for r in conn.execute(
+                text("SELECT merchant_id FROM merchant_features ORDER BY RANDOM() LIMIT :n"),
+                {"n": n},
+            )
+        ]
     if not users or not merchants:
         return []
     return [(random.choice(users), random.choice(merchants)) for _ in range(n)]

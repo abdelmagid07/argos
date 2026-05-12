@@ -10,51 +10,26 @@ Usage:
 from __future__ import annotations
 
 import logging
-import sqlite3
 import time
 
 import pandas as pd
+from sqlalchemy import text
 
-from src.config import DB_PATH
+from src import db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("features")
 
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS user_features (
-    user_id                  INTEGER PRIMARY KEY,
-    total_transactions       INTEGER,
-    total_spend              REAL,
-    avg_transaction_amount   REAL,
-    max_transaction_amount   REAL,
-    transaction_velocity_24h INTEGER,
-    unique_merchants         INTEGER,
-    unique_countries         INTEGER,
-    fraud_rate               REAL,
-    last_transaction_ts      REAL,
-    updated_at               REAL
-);
-
-CREATE TABLE IF NOT EXISTS merchant_features (
-    merchant_id                 INTEGER PRIMARY KEY,
-    merchant_total_transactions INTEGER,
-    merchant_avg_amount         REAL,
-    merchant_fraud_rate         REAL,
-    merchant_unique_users       INTEGER,
-    updated_at                  REAL
-);
-"""
-
-
 def compute() -> tuple[pd.DataFrame, pd.DataFrame]:
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        conn.executescript(SCHEMA)
-        log.info("Loading raw_transactions from SQLite...")
-        df = pd.read_sql("SELECT * FROM raw_transactions", conn)
-    finally:
-        conn.close()
+    # Make sure the feature tables exist before we attempt to write to them.
+    # init_schema is a no-op if they already do.
+    with db.get_connection() as conn:
+        db.init_schema(conn)
+
+    engine = db.get_engine()
+    log.info("Loading raw_transactions from %s...", db.describe()["backend"])
+    df = pd.read_sql("SELECT * FROM raw_transactions", engine)
 
     if df.empty:
         raise RuntimeError(
@@ -105,21 +80,28 @@ def compute() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def write(user_features: pd.DataFrame, merchant_features: pd.DataFrame) -> None:
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        # Replace the table contents wholesale; this matches the Spark
-        # `mode="overwrite"` behavior in PROJECT.md and keeps things idempotent.
-        conn.execute("DELETE FROM user_features")
-        conn.execute("DELETE FROM merchant_features")
-        user_features.to_sql("user_features", conn, if_exists="append", index=False)
-        merchant_features.to_sql("merchant_features", conn, if_exists="append", index=False)
-        conn.commit()
-        log.info(
-            "Wrote %d user_features and %d merchant_features.",
-            len(user_features), len(merchant_features),
+    """Replace feature tables wholesale.
+
+    Both backends do this inside a single transaction (via engine.begin())
+    so readers don't briefly see an empty table mid-rewrite. This matches
+    Spark's `mode="overwrite"` semantics from PROJECT.md.
+    """
+    engine = db.get_engine()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM user_features"))
+        conn.execute(text("DELETE FROM merchant_features"))
+        user_features.to_sql(
+            "user_features", conn, if_exists="append",
+            index=False, method="multi", chunksize=1000,
         )
-    finally:
-        conn.close()
+        merchant_features.to_sql(
+            "merchant_features", conn, if_exists="append",
+            index=False, method="multi", chunksize=1000,
+        )
+    log.info(
+        "Wrote %d user_features and %d merchant_features.",
+        len(user_features), len(merchant_features),
+    )
 
 
 def main() -> None:

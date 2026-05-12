@@ -1,4 +1,6 @@
-"""Stage 1: ingest raw transactions into SQLite.
+"""Stage 1: ingest raw transactions into the active DB backend.
+
+Backend is chosen by src.db: Postgres if DATABASE_URL is set, else SQLite.
 
 If the IEEE-CIS CSV is present in data/, use it. Otherwise generate a
 synthetic dataset so the rest of the pipeline can run end-to-end without
@@ -16,14 +18,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
-import sqlite3
 import time
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
-from src.config import DB_PATH, IEEE_CIS_CSV
+from src import db
+from src.config import IEEE_CIS_CSV
 
 
 def _stable_hash(s: str, mod: int) -> int:
@@ -37,31 +39,6 @@ def _stable_hash(s: str, mod: int) -> int:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ingest")
-
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS raw_transactions (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    transaction_id  TEXT UNIQUE,
-    user_id         INTEGER,
-    amount          REAL,
-    merchant_id     INTEGER,
-    merchant_category TEXT,
-    device          TEXT,
-    country         TEXT,
-    timestamp       REAL,
-    is_fraud        INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_raw_user ON raw_transactions(user_id);
-CREATE INDEX IF NOT EXISTS idx_raw_merchant ON raw_transactions(merchant_id);
-CREATE INDEX IF NOT EXISTS idx_raw_timestamp ON raw_transactions(timestamp);
-"""
-
-
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.executescript(SCHEMA)
-    return conn
 
 
 def _load_real(rows: Optional[int]) -> pd.DataFrame:
@@ -163,41 +140,47 @@ def _load_synthetic(rows: int) -> pd.DataFrame:
     return df
 
 
-def write_to_sqlite(df: pd.DataFrame, reset: bool = False) -> int:
-    conn = _connect()
-    try:
-        cur = conn.cursor()
+COLUMNS = [
+    "transaction_id", "user_id", "amount", "merchant_id",
+    "merchant_category", "device", "country", "timestamp", "is_fraud",
+]
+
+
+def write_to_db(df: pd.DataFrame, reset: bool = False) -> int:
+    """Idempotent bulk insert into raw_transactions on the active backend.
+
+    Dispatches to db.bulk_insert_ignore_conflicts which uses
+    `INSERT OR IGNORE` (SQLite) or `INSERT ... ON CONFLICT DO NOTHING`
+    (Postgres) so re-running ingest never produces duplicates.
+    """
+    with db.get_connection() as conn:
+        db.init_schema(conn)
         if reset:
             # Clear raw_transactions plus any downstream features so a re-ingest
             # under a new merchant_id scheme doesn't leave stale rows behind.
             log.info("--reset: truncating raw_transactions + feature tables")
-            cur.execute("DELETE FROM raw_transactions")
-            for tbl in ("user_features", "merchant_features"):
-                cur.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                    (tbl,),
-                )
-                if cur.fetchone():
-                    cur.execute(f"DELETE FROM {tbl}")
+            cur = conn.cursor()
+            for tbl in ("user_features", "merchant_features", "raw_transactions"):
+                cur.execute(f"DELETE FROM {tbl}")
+            conn.commit()
 
-        rows = df[[
-            "transaction_id", "user_id", "amount", "merchant_id",
-            "merchant_category", "device", "country", "timestamp", "is_fraud",
-        ]].itertuples(index=False, name=None)
-        # INSERT OR IGNORE keeps the script idempotent on transaction_id.
-        cur.executemany(
-            """
-            INSERT OR IGNORE INTO raw_transactions
-              (transaction_id, user_id, amount, merchant_id,
-               merchant_category, device, country, timestamp, is_fraud)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows,
+        # Convert numpy/pandas scalar types to native Python so psycopg2 and
+        # sqlite3 don't choke on numpy.int64 etc.
+        rows = [tuple(map(_to_python, r)) for r in df[COLUMNS].itertuples(index=False, name=None)]
+        return db.bulk_insert_ignore_conflicts(
+            conn,
+            table="raw_transactions",
+            columns=COLUMNS,
+            rows=rows,
+            conflict_col="transaction_id",
         )
-        conn.commit()
-        return cur.rowcount
-    finally:
-        conn.close()
+
+
+def _to_python(v):
+    """psycopg2 understands native Python ints/floats but not numpy scalars."""
+    if hasattr(v, "item"):
+        return v.item()
+    return v
 
 
 def main() -> None:
@@ -221,9 +204,10 @@ def main() -> None:
                         IEEE_CIS_CSV)
         df = _load_synthetic(args.rows or 100_000)
 
-    log.info("Writing %d rows to %s", len(df), DB_PATH)
-    inserted = write_to_sqlite(df, reset=args.reset)
-    log.info("Inserted %d new rows (duplicates skipped).", inserted)
+    backend = db.describe()
+    log.info("Writing %d rows to %s backend", len(df), backend["backend"])
+    inserted = write_to_db(df, reset=args.reset)
+    log.info("Wrote %d rows (duplicates ignored).", inserted)
 
 
 if __name__ == "__main__":

@@ -1,17 +1,18 @@
 """Stage 4 (MVP): in-memory feature store.
 
-Loads user_features and merchant_features from SQLite into Python dicts at
-startup. Lookups are O(1). When we graduate to Redis, only this file changes;
-the API contract (`get_user_features`, `get_merchant_features`) stays the
-same.
+Loads user_features and merchant_features from the active backend (SQLite or
+Postgres) into Python dicts at startup. Lookups are O(1). When we graduate
+to Redis, only this file changes; the API contract (`get_user_features`,
+`get_merchant_features`) stays the same.
 """
 from __future__ import annotations
 
 import logging
-import sqlite3
 from dataclasses import dataclass, field
 
-from src.config import DB_PATH
+from sqlalchemy import text
+
+from src import db
 
 log = logging.getLogger("feature_store")
 
@@ -23,21 +24,23 @@ class FeatureStore:
 
     @classmethod
     def load(cls) -> "FeatureStore":
+        """Pull both feature tables into RAM via the SQLAlchemy engine.
+
+        Using the engine keeps this backend-agnostic. Column names come back
+        as dict keys regardless of whether we hit SQLite or Postgres.
+        """
         store = cls()
-        conn = sqlite3.connect(DB_PATH)
-        try:
-            conn.row_factory = sqlite3.Row
-            for row in conn.execute("SELECT * FROM user_features"):
+        engine = db.get_engine()
+        with engine.connect() as conn:
+            for row in conn.execute(text("SELECT * FROM user_features")).mappings():
                 d = dict(row)
                 store.users[int(d.pop("user_id"))] = d
-            for row in conn.execute("SELECT * FROM merchant_features"):
+            for row in conn.execute(text("SELECT * FROM merchant_features")).mappings():
                 d = dict(row)
                 store.merchants[int(d.pop("merchant_id"))] = d
-        finally:
-            conn.close()
         log.info(
-            "FeatureStore loaded: %d users, %d merchants",
-            len(store.users), len(store.merchants),
+            "FeatureStore loaded from %s: %d users, %d merchants",
+            db.describe()["backend"], len(store.users), len(store.merchants),
         )
         return store
 

@@ -13,6 +13,10 @@ fastapi
 uvicorn[standard]
 pydantic
 
+# Database 
+psycopg2-binary
+SQLAlchemy
+
 # Misc
 python-dotenv
 httpx  # used by smoke_test.py

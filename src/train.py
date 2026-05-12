@@ -11,7 +11,6 @@ import argparse
 import json
 import logging
 import pickle
-import sqlite3
 import time
 
 import numpy as np
@@ -23,8 +22,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
+from src import db
 from src.config import (
-    DB_PATH,
     FEATURE_COLUMNS,
     FEATURE_COLUMNS_PATH,
     MODEL_PATH,
@@ -57,11 +56,10 @@ LEFT JOIN merchant_features m ON t.merchant_id = m.merchant_id
 
 
 def load_dataset() -> tuple[np.ndarray, np.ndarray, StandardScaler]:
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        df = pd.read_sql(JOIN_QUERY, conn)
-    finally:
-        conn.close()
+    # SQLAlchemy engine handles both SQLite and Postgres transparently.
+    engine = db.get_engine()
+    log.info("Loading joined dataset from %s...", db.describe()["backend"])
+    df = pd.read_sql(JOIN_QUERY, engine)
 
     if df.empty:
         raise RuntimeError(
