@@ -1,0 +1,18 @@
+# Argos MVP dependencies
+
+# Data + numerics
+pandas
+numpy
+scikit-learn
+
+# Model
+torch
+
+# API
+fastapi
+uvicorn[standard]
+pydantic
+
+# Misc
+python-dotenv
+httpx  # used by smoke_test.py
