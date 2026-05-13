@@ -53,8 +53,7 @@ services:
     container_name: argos-redis
     ports:
       - "6380:6379"
-    # maxmemory-policy: when the cache fills up, evict the least-recently-used
-    # key. 
+    # maxmemory-policy: when the cache fills up, evict the least-recently-used key.
     command:
       - redis-server
       - --maxmemory

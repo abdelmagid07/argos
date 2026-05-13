@@ -6,8 +6,10 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Data & models (large / generated)
+# Data & trained weights (large / generated)
 data/*.csv
 data/*.zip
 *.db
@@ -32,4 +34,4 @@ logs/
 
 # Misc
 PROJECT.md
-*.sql
+benchmarks/results/*.json

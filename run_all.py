@@ -1,9 +1,5 @@
 """End-to-end test runner for Argos.
 
-One script that does the whole pipeline.
- Future roadmap stages (Spark, Docker, k8s, Prometheus,
-and an alternate Kafka ingest path) are commented out at the bottom.
-
 Pipeline (default):
     ingest -> features -> sync_to_redis -> train -> serve -> smoke_test
 
@@ -191,114 +187,12 @@ def stage_serve(args) -> None:
         stage_serve_local(args)
 
 
-# ---------------------------------------------------------------------------
-# Future stages — uncomment as the roadmap lands
-# ---------------------------------------------------------------------------
-
-# def stage_kafka_streaming(args) -> None:
-#     """Stream-through-Kafka alternative to direct ingest.
-#
-#     Brings up Zookeeper + Kafka via docker compose, starts the consumer in
-#     the background, then runs the producer in the foreground. Use INSTEAD
-#     of stage_ingest.
-#     """
-#     section("Optional: Kafka streaming ingest")
-#     run(["docker", "compose", "up", "-d", "zookeeper", "kafka"])
-#     consumer = subprocess.Popen([PY, "-m", "src.kafka_ingest.consumer"], cwd=ROOT)
-#     try:
-#         time.sleep(5)  # give consumer time to join the group
-#         run([
-#             PY, "-m", "src.kafka_ingest.producer",
-#             *(["--synthetic"] if args.synthetic else []),
-#             *(["--rows", str(args.rows)] if args.rows else []),
-#         ])
-#     finally:
-#         consumer.terminate()
-#         consumer.wait(timeout=10)
-#
-#
-# def stage_spark(args) -> None:
-#     """Replace pandas feature compute with Spark batch job."""
-#     section("Stage 5: Spark batch feature computation")
-#     run([
-#         "spark-submit",
-#         "--jars", "spark/jars/postgresql-42.6.0.jar",
-#         "spark/compute_features.py",
-#     ])
-#
-#
-# def stage_k8s_deploy(args) -> None:
-#     section("Stage 7: kubernetes apply")
-#     run(["kind", "load", "docker-image", "argos-api:v1", "--name", "argos"])
-#     run(["kubectl", "apply", "-f", "k8s/api-deployment.yaml"])
-#     run(["kubectl", "apply", "-f", "k8s/api-hpa.yaml"])
-#
-#
-# def stage_prometheus(args) -> None:
-#     section("Stage 8: Prometheus + Grafana")
-#     run([
-#         "helm", "install", "prometheus",
-#         "prometheus-community/kube-prometheus-stack",
-#     ])
-#
-#
-# def stage_locust(args) -> None:
-#     section("Stage 8b: Locust load test")
-#     run(["locust", "-f", "load_test/locustfile.py",
-#          "--host", f"http://localhost:{args.port}"])
-
-#
-#
-# ---------------------------------------------------------------------------
-# UI / dashboard options (parked for later) — none of these are implemented.
-# Pick one when ready to put a front end on Argos. Order is roughly
-# "smallest scope" -> "largest scope".
-# ---------------------------------------------------------------------------
-#
-# OPTION A — Static demo dashboard (recommended first cut, ~4-6 hours)
-#     A single-page UI (React or HTMX) that talks to FastAPI:
-#       - dropdown of real user_ids from user_features
-#       - GET /features/{user_id} (new endpoint) shows precomputed features
-#       - form for amount/merchant_id/type -> POST /predict
-#       - visualizes fraud_score, risk_label, feature contributions
-#       - small widget polling /stats for live p50/p95/p99 latency
-#     Honest about what Argos is (a backend service) and demos the stack in 90s.
-#     Frontend host: Vercel or Netlify (free). API: Render/Fly (free tier).
-#
-# OPTION B — Live throughput simulation (the "wow" demo, ~8-10 hours)
-#     OPTION A plus:
-#       - "Start stream" button kicks off the Kafka producer at high rate
-#       - WebSocket from FastAPI streams scored transactions to the UI
-#       - tape view scrolls live transactions color-coded by risk
-#       - live counters: req/sec, fraud rate, latency histogram
-#     This is the version worth recording a 30-second video of.
-#     Requires: WebSocket support in serve.py, a frontend chart lib.
-#
-# OPTION C — Internal fraud-ops admin dashboard (most "real", ~12-16 hours)
-#     What an actual fraud team would use day-to-day:
-#       - recent predictions table with filters (risk, amount, time window)
-#       - per-user drilldown ("show me everything user 12345 did")
-#       - manual review queue: analyst marks fraud/not-fraud
-#       - feedback loop: marked labels feed back into the training set
-#     Only worth it for fraud-specific job applications.
-#
-
-# ---------------------------------------------------------------------------
-# Wiring
-# ---------------------------------------------------------------------------
-
 STAGE_HANDLERS = {
     "ingest": stage_ingest,
     "features": stage_features,
     "sync_to_redis": stage_sync_to_redis,
     "train": stage_train,
-    "serve": stage_serve,  # dispatches to local uvicorn or docker container
-    # As you uncomment future stages above, also register them here, e.g.:
-    # "kafka": stage_kafka_streaming,
-    # "spark": stage_spark,
-    # "k8s": stage_k8s_deploy,
-    # "prometheus": stage_prometheus,
-    # "locust": stage_locust,
+    "serve": stage_serve,
 }
 
 DEFAULT_ORDER = ["ingest", "features", "sync_to_redis", "train", "serve"]
