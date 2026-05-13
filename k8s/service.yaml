@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: argos-api
+  namespace: argos
+  labels:
+    app: argos-api
+spec:
+  type: ClusterIP
+  selector:
+    app: argos-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

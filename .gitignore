@@ -18,6 +18,7 @@ models/*.pkl
 # Local env
 .env
 .env.local
+k8s/secret-argos-api.yaml
 
 # OS / editor
 .DS_Store

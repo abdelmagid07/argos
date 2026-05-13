@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argos-api
+  namespace: argos
+  labels:
+    app: argos-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: argos-api
+  template:
+    metadata:
+      labels:
+        app: argos-api
+    spec:
+      containers:
+        - name: api
+          image: argos-api:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: argos-api-env
+          env:
+            # Optional: create Secret `argos-api-secrets` (see secret-argos-api.example.yaml).
+            # If missing, DATABASE_URL is unset and db.py falls back to SQLite in /app.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: argos-api-secrets
+                  key: DATABASE_URL
+                  optional: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"

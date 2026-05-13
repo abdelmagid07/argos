@@ -1,0 +1,8 @@
+# Non-secret env defaults for the API. Patch REDIS_URL if host.docker.internal
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argos-api-env
+  namespace: argos
+data:
+  REDIS_URL: "redis://host.docker.internal:6380"
