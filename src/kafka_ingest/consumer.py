@@ -13,6 +13,7 @@ import argparse
 import json
 import logging
 import os
+import time
 
 from src import db
 from src.ingest import COLUMNS, to_python_scalar
@@ -93,6 +94,24 @@ def main() -> None:
 
     processed = 0
     batch: list[tuple] = []
+    t_wall = time.perf_counter()
+    last_tick = t_wall
+    processed_at_tick = 0
+
+    def _maybe_log_throughput() -> None:
+        nonlocal last_tick, processed_at_tick
+        now = time.perf_counter()
+        window = now - last_tick
+        if window < 1.0:
+            return
+        n = processed - processed_at_tick
+        log.info(
+            "Sink throughput: %.0f committed rows/s (1s window) | total=%d",
+            n / window,
+            processed,
+        )
+        last_tick = now
+        processed_at_tick = processed
 
     try:
         for message in consumer:
@@ -107,6 +126,7 @@ def main() -> None:
                     consumer.commit()
                     if processed % 5000 == 0:
                         log.info("Committed %d rows", processed)
+                    _maybe_log_throughput()
             except Exception as e:
                 log.exception("Bad message offset=%s: %s", message.offset, e)
                 dlq.send(args.dlq_topic, message.value)
@@ -118,6 +138,14 @@ def main() -> None:
             _flush_batch(batch)
             processed += len(batch)
             consumer.commit()
+        elapsed = time.perf_counter() - t_wall
+        if processed and elapsed > 0:
+            log.info(
+                "Stopped. total_committed=%d wall_s=%.1f avg=%.0f rows/s",
+                processed,
+                elapsed,
+                processed / elapsed,
+            )
         raise
 
 

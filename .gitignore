@@ -35,3 +35,4 @@ logs/
 # Misc
 PROJECT.md
 benchmarks/results/*.json
+benchmarks/results/*.html

@@ -22,6 +22,7 @@ redis
 
 # Streaming ingest (Kafka producer / consumer)
 kafka-python
+lz4  
 
 # Misc
 python-dotenv

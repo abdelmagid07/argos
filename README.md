@@ -18,6 +18,7 @@ and **Kubernetes (kind)** show how the same API image scales.
 - [API](#api)
 - [Repository layout](#repository-layout)
 - [Development & testing](#development--testing)
+- [Benchmarks](#benchmarks)
 - [Security](#security)
 - [Roadmap](#roadmap)
 - [License](#license)
@@ -239,10 +240,11 @@ curl -s -X POST http://localhost:8000/predict \
 
 ```text
 ├── Dockerfile / docker-compose.yml   # API image + local infra
+├── benchmarks/                       # Locust + throughput docs
 ├── run_all.py                        # Orchestrated pipeline + smoke test
-├── requirements.txt                  # Pinned dependency ranges
-├── schema.sql                        # Postgres DDL (optional vs init_schema)
-├── k8s/                              # K8s Manifests 
+├── requirements.txt
+├── schema.sql
+├── k8s/
 ├── src/
 │   ├── ingest.py / features.py / train.py / serve.py
 │   ├── db.py / feature_store.py / redis_store.py / sync_to_redis.py

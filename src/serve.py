@@ -7,6 +7,14 @@ Endpoints:
     GET  /health   liveness check
     POST /predict  fraud score for a single transaction
     GET  /stats    in-process counters (poor man's Prometheus)
+
+Diagnostics under load
+----------------------
+- ``GET /stats`` exposes ``in_flight``: if ``current`` or ``max_since_boot``
+  tracks Locust user count while latency spikes, the ASGI/thread-pool queue is
+  likely the bottleneck (sync ``predict`` runs in a worker thread pool).
+- ``POST /predict?timings=1`` adds ``breakdown_ms`` (feature store, prep,
+  scaler, model) so you can see CPU vs I/O.
 """
 from __future__ import annotations
 
@@ -19,9 +27,11 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import torch
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from src.config import (
     FEATURE_COLUMNS,
@@ -49,6 +59,7 @@ class PredictResponse(BaseModel):
     latency_ms: float
     used_user_features: bool
     used_merchant_features: bool
+    breakdown_ms: Optional[dict[str, float]] = None
 
 
 class _State:
@@ -118,6 +129,25 @@ class _State:
 
 STATE = _State()
 
+_in_flight = 0
+_in_flight_lock = threading.Lock()
+_in_flight_max = 0
+
+
+class _InFlightMiddleware(BaseHTTPMiddleware):
+    """Count requests currently inside the app (incl. sync work in thread pool)."""
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        global _in_flight, _in_flight_max
+        with _in_flight_lock:
+            _in_flight += 1
+            _in_flight_max = max(_in_flight_max, _in_flight)
+        try:
+            return await call_next(request)
+        finally:
+            with _in_flight_lock:
+                _in_flight -= 1
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -131,6 +161,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Argos Fraud Detection (MVP)", lifespan=lifespan)
+app.add_middleware(_InFlightMiddleware)
 
 
 def _risk_label(score: float) -> str:
@@ -153,15 +184,22 @@ def health() -> dict:
     }
 
 
-@app.post("/predict", response_model=PredictResponse)
-def predict(req: PredictRequest) -> PredictResponse:
+@app.post("/predict", response_model=PredictResponse, response_model_exclude_none=True)
+def predict(
+    req: PredictRequest,
+    timings: bool = Query(False, description="Include breakdown_ms (server-only timing)."),
+) -> PredictResponse:
     if STATE.model is None or STATE.store is None or STATE.scaler is None:
         raise HTTPException(503, "Model not loaded")
 
     started = time.perf_counter()
+    bd: dict[str, float] | None = {} if timings else None
 
     user_feats = STATE.store.get_user_features(req.user_id)
     merchant_feats = STATE.store.get_merchant_features(req.merchant_id)
+    if bd is not None:
+        bd["features_ms"] = round((time.perf_counter() - started) * 1000, 3)
+    t_prep0 = time.perf_counter()
 
     # MVP policy: cold-start users/merchants get zeros and a flag in the
     # response. Production will likely reject or route to a fallback model.
@@ -179,11 +217,20 @@ def predict(req: PredictRequest) -> PredictResponse:
         "merchant_id": req.merchant_id,
     }
     vec = [[float(feature_lookup[c]) for c in STATE.feature_columns]]
+    if bd is not None:
+        bd["prep_ms"] = round((time.perf_counter() - t_prep0) * 1000, 3)
+    t_scale0 = time.perf_counter()
+
     scaled = STATE.scaler.transform(vec)
     tensor = torch.from_numpy(scaled).float()
+    if bd is not None:
+        bd["scaler_ms"] = round((time.perf_counter() - t_scale0) * 1000, 3)
+    t_model0 = time.perf_counter()
 
     with torch.no_grad():
         score = float(STATE.model.predict_proba(tensor).item())
+    if bd is not None:
+        bd["model_ms"] = round((time.perf_counter() - t_model0) * 1000, 3)
 
     label = _risk_label(score)
     latency_ms = (time.perf_counter() - started) * 1000
@@ -195,6 +242,7 @@ def predict(req: PredictRequest) -> PredictResponse:
         missing_merchant=not merchant_feats,
     )
 
+    out_breakdown: Optional[dict[str, float]] = bd if timings else None
     return PredictResponse(
         fraud_score=round(score, 4),
         risk_label=label,
@@ -202,6 +250,7 @@ def predict(req: PredictRequest) -> PredictResponse:
         latency_ms=round(latency_ms, 3),
         used_user_features=bool(user_feats),
         used_merchant_features=bool(merchant_feats),
+        breakdown_ms=out_breakdown,
     )
 
 
@@ -215,8 +264,11 @@ def stats() -> JSONResponse:
                    "samples": len(lats)}
     else:
         latency = {"p50": None, "p95": None, "p99": None, "samples": 0}
+    with _in_flight_lock:
+        flight = {"current": _in_flight, "max_since_boot": _in_flight_max}
     return JSONResponse({
         "counters": STATE.counters,
         "latency_ms": latency,
+        "in_flight": flight,
         "model_version": STATE.model_version,
     })

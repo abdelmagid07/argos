@@ -1,0 +1,2 @@
+# Optional — install when running load tests (see benchmarks/README.md).
+locust
