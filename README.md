@@ -93,20 +93,69 @@ under `data/` for realistic training data.
 
 ## Architecture
 
-```text
-[CSV or synthetic]  →  src.ingest  ──────────────────────────────┐
-      │                                                          │
-      └── optional Kafka → topic `transactions`                  │
-                      │                                          │
-                      └── kafka_ingest.consumer → raw_transactions
-                                                                 ▼
-            src.features → user_features, merchant_features (offline)
-                                 │
-            src.sync_to_redis → Redis hashes (online)
-                                 │
-            src.train → models/*.pt, scaler.pkl
-                                 │
-            src.serve → FastAPI /predict
+```mermaid
+graph TD
+    %% Styling
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px;
+    classDef dataStore fill:#f4edff,stroke:#8b5cf6,stroke-width:2px;
+    classDef processing fill:#e0f2fe,stroke:#0ea5e9,stroke-width:2px;
+    classDef api fill:#ecfdf5,stroke:#10b981,stroke-width:2px;
+    classDef kafka fill:#fff7ed,stroke:#f97316,stroke-width:2px;
+
+    %% Data Sources
+    Data["CSV / Synthetic Data"] --> Ingest["src.ingest (Batch)"]:::processing
+    Data --> Producer["Kafka Producer (Stream)"]:::processing
+
+    %% Kafka Layer
+    subgraph Event Streaming
+        Producer --> KafkaTopic{{"transactions<br/>(Kafka Topic)"}}:::kafka
+        KafkaTopic --> Consumer["kafka_ingest.consumer"]:::processing
+        Consumer -. Parse Failure .-> DLQ{{"transactions-dlq<br/>(Kafka Topic)"}}:::kafka
+    end
+
+    %% Ingestion Layer
+    Ingest --> Postgres
+    Consumer --> Postgres
+
+    %% Offline Feature Store
+    subgraph Offline Feature Store
+        Postgres[("raw_transactions<br/>(SQLite / PostgreSQL)")]:::dataStore
+        PandasJob["src.features<br/>(Pandas/Spark)"]:::processing
+        UserFeats[("user_features")]:::dataStore
+        MerchantFeats[("merchant_features")]:::dataStore
+        
+        Postgres --> PandasJob
+        PandasJob --> UserFeats
+        PandasJob --> MerchantFeats
+    end
+
+    %% Online Feature Store
+    subgraph Online Feature Store
+        RedisSync["src.sync_to_redis"]:::processing
+        RedisCache[("Redis Hashes<br/>(Online Cache)")]:::dataStore
+        
+        UserFeats --> RedisSync
+        MerchantFeats --> RedisSync
+        RedisSync --> RedisCache
+    end
+
+    %% Model Training
+    subgraph Model Training
+        Train["src.train"]:::processing
+        Model[("models/*.pt<br/>scaler.pkl")]:::dataStore
+        
+        UserFeats -.-> Train
+        MerchantFeats -.-> Train
+        Train --> Model
+    end
+
+    %% Serving Layer
+    subgraph Serving Layer
+        FastAPI["src.serve<br/>(FastAPI /predict)"]:::api
+        
+        RedisCache -. Feature Pull .-> FastAPI
+        Model -. Load .-> FastAPI
+    end
 ```
 
 Batch ingest (`python -m src.ingest`) and streaming ingest (producer → Kafka →
