@@ -31,5 +31,5 @@ class FraudDetector(nn.Module):
 
     @torch.no_grad()
     def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
-        self.eval()
+        """Sigmoid over logits. Caller must ensure model is in eval mode."""
         return torch.sigmoid(self.forward(x))

@@ -117,6 +117,8 @@ def stage_serve_local(args) -> None:
         "--port", str(args.port),
         "--log-level", "warning",
     ]
+    if args.workers and args.workers > 1:
+        serve_cmd += ["--workers", str(args.workers)]
     print(f"$ {' '.join(serve_cmd)}  (background)", flush=True)
     server = subprocess.Popen(serve_cmd, cwd=ROOT)
 
@@ -228,6 +230,8 @@ def parse_args() -> argparse.Namespace:
                    help="Skip the serve+smoke stage (data pipeline only).")
     p.add_argument("--keep-server", action="store_true",
                    help="Leave the API running after smoke_test.")
+    p.add_argument("--workers", type=int, default=1,
+                   help="Uvicorn worker processes (default 1). Use 2-4 for load tests.")
     p.add_argument("--via-docker", action="store_true",
                    help="Run the API inside a Docker container (image: argos-api:dev) "
                         "via docker compose, instead of uvicorn on the host. Requires "

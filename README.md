@@ -94,7 +94,7 @@ under `data/` for realistic training data.
 ## Architecture
 
 ```mermaid
-graph TD
+graph LR
     %% Styling
     classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px;
     classDef dataStore fill:#f4edff,stroke:#8b5cf6,stroke-width:2px;
