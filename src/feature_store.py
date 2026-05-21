@@ -1,19 +1,16 @@
-"""Feature store.
+"""Online feature store with pluggable backends.
 
-Backends
---------
-- `InMemoryFeatureStore`: loads `user_features` and
-  `merchant_features` rows from the offline DB into Python dicts at API
-  startup. Zero external dependencies, but features are stale until the
-  API is restarted, and every replica holds its own copy in RAM.
+Backends:
+    InMemoryFeatureStore  Loads ``user_features`` and ``merchant_features`` from
+                          the offline DB into Python dicts at startup. Zero
+                          dependencies; features stale until the API restarts.
 
-- `RedisFeatureStore` (enabled when REDIS_URL is set in .env): looks up
-  features in Redis hashes on each request. Features can be refreshed
-  without restarting the API, and
-  many API replicas share the same cache.
+    RedisFeatureStore     Used when ``REDIS_URL`` is set. Per-request HGETALL
+                          against shared Redis hashes; features can refresh
+                          without restarting the API, and replicas share state.
 
-Both implement the same `FeatureStore` Protocol, so `src/serve.py` doesn't
-care which one is active.
+Both implement the same ``FeatureStore`` Protocol, so ``src/serve.py`` is
+backend-agnostic.
 """
 from __future__ import annotations
 
@@ -95,11 +92,10 @@ class InMemoryFeatureStore:
 
 
 def load_feature_store() -> FeatureStore:
-    """Pick the right backend based on env vars.
-    """
+    """Return the active backend based on environment variables."""
     redis_url = os.getenv("REDIS_URL")
     if redis_url and redis_url.strip():
-        # Import here so InMemory users don't need redis installed.
+        # Lazy import so in-memory users don't pay for the redis client.
         from src.redis_store import RedisFeatureStore
         return RedisFeatureStore(redis_url.strip())
     return InMemoryFeatureStore.load()

@@ -1,8 +1,4 @@
-"""Stage 2: compute user + merchant features from raw_transactions.
-
-The MVP uses pandas. The Spark equivalent in PROJECT.md does the same
-aggregations, just distributed. Swap implementations later without changing
-downstream consumers.
+"""Compute user + merchant features from ``raw_transactions``.
 
 Usage:
     python -m src.features
@@ -22,8 +18,6 @@ log = logging.getLogger("features")
 
 
 def compute() -> tuple[pd.DataFrame, pd.DataFrame]:
-    # Make sure the feature tables exist before we attempt to write to them.
-    # init_schema is a no-op if they already do.
     with db.get_connection() as conn:
         db.init_schema(conn)
 
@@ -80,11 +74,7 @@ def compute() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def write(user_features: pd.DataFrame, merchant_features: pd.DataFrame) -> None:
-    """Replace feature tables wholesale.
-
-    Both backends do this inside a single transaction (via engine.begin())
-    so readers don't briefly see an empty table mid-rewrite. This matches
-    Spark's `mode="overwrite"` semantics from PROJECT.md.
+    """Replace feature tables wholesale inside a single transaction.
     """
     engine = db.get_engine()
     with engine.begin() as conn:

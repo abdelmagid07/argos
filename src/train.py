@@ -1,9 +1,9 @@
-"""Stage 3: train the fraud classifier on joined raw_transactions + features.
+"""Train the fraud classifier on joined ``raw_transactions`` + feature tables.
 
 Usage:
     python -m src.train                # default 15 epochs
     python -m src.train --epochs 30    # longer run
-    python -m src.train --device cuda  # if you have a GPU
+    python -m src.train --device cuda  # GPU (if available)
 """
 from __future__ import annotations
 

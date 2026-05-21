@@ -1,7 +1,4 @@
-"""Central paths and constants for the Argos MVP.
-
-Later stages only
-need to change config.py rather than every script.
+"""Central paths and constants for Argos.
 """
 from pathlib import Path
 

@@ -1,2 +1,2 @@
-# Optional — install when running load tests (see benchmarks/README.md).
-locust
+# Optional — install when running load tests (see README "Benchmarks").
+locust==2.44.0

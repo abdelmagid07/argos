@@ -9,7 +9,7 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# Data & trained weights (large / generated)
+# Data + trained artifacts (large / generated)
 data/*.csv
 data/*.zip
 *.db
@@ -17,12 +17,12 @@ data/*.zip
 models/*.pt
 models/*.pkl
 
-# Local env
+# Local secrets
 .env
 .env.local
 k8s/secret-argos-api.yaml
 
-# OS / editor
+# OS / editor noise
 .DS_Store
 Thumbs.db
 .vscode/
@@ -32,7 +32,7 @@ Thumbs.db
 logs/
 *.log
 
-# Misc
+# Working notes
 PROJECT.md
 benchmarks/results/*.json
 benchmarks/results/*.html

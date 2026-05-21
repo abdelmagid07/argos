@@ -1,29 +1,29 @@
-# Argos MVP dependencies
+# Argos runtime dependencies.
 
 # Data + numerics
-pandas
-numpy
-scikit-learn
+pandas==3.0.3
+numpy==2.4.4
+scikit-learn==1.8.0
 
 # Model
-torch
+torch==2.12.0
 
 # API
-fastapi
-uvicorn[standard]
-pydantic
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
+pydantic==2.13.4
 
-# Database 
-psycopg2-binary
-SQLAlchemy
+# Database
+psycopg2-binary==2.9.12
+SQLAlchemy==2.0.49
 
-# Online feature store 
-redis
+# Online feature store
+redis==7.4.0
 
 # Streaming ingest (Kafka producer / consumer)
-kafka-python
-lz4  
+kafka-python==2.3.1
+lz4==4.4.5            # producer compression_type="lz4"
 
 # Misc
-python-dotenv
-httpx  # used by smoke_test.py
+python-dotenv==1.2.2
+httpx==0.28.1         # used by src.smoke_test

@@ -1,17 +1,15 @@
-"""Stage 1: ingest raw transactions into the active DB backend.
+"""Ingest raw transactions into the active DB backend.
 
-Backend is chosen by src.db: Postgres if DATABASE_URL is set, else SQLite.
-
-If the IEEE-CIS CSV is present in data/, use it. Otherwise generate a
-synthetic dataset so the rest of the pipeline can run end-to-end without
-external downloads. Real IEEE-CIS data is preferred for meaningful AUC.
+Backend is chosen by :mod:`src.db` (Postgres if ``DATABASE_URL`` is set, else
+SQLite). If ``data/train_transaction.csv`` (Kaggle IEEE-CIS) is present we use
+it; otherwise we synthesize a comparable dataset so the rest of the pipeline
+can run end-to-end without external downloads.
 
 Usage:
     python -m src.ingest                  # auto: real if present, else synthetic
     python -m src.ingest --synthetic      # force synthetic
-    python -m src.ingest --rows 50000     # limit rows (real or synthetic)
-    python -m src.ingest --reset          # truncate tables first (use after
-                                          # changing merchant_id mapping)
+    python -m src.ingest --rows 50000     # cap rows (real or synthetic)
+    python -m src.ingest --reset          # truncate tables first
 """
 from __future__ import annotations
 

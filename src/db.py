@@ -1,19 +1,15 @@
-"""Stage 2: dual SQLite / Postgres backend.
+"""Dual SQLite / Postgres backend selected at runtime.
 
-Selection rule
---------------
-If env var DATABASE_URL is set (and non-empty), use Postgres.
-Otherwise fall back to local SQLite at config.DB_PATH.
+If ``DATABASE_URL`` is set, use Postgres. Otherwise fall back to a local
+SQLite file at ``config.DB_PATH``. Callers stay backend-agnostic.
 
-Public API
-----------
-    using_postgres() -> bool
-    get_engine()                  - SQLAlchemy engine (use with pandas)
-    get_connection()              - context manager, raw DBAPI connection
-    placeholder()                 - "?" for SQLite, "%s" for Postgres
-    init_schema(conn)             - create tables idempotently
-    bulk_insert_ignore_conflicts(conn, table, columns, rows, conflict_col)
-                                    backend-aware bulk insert
+Public API:
+    using_postgres()              -> bool
+    get_engine()                  -> SQLAlchemy engine (pandas-compatible)
+    get_connection()              -> context manager, raw DBAPI connection
+    placeholder()                 -> "?" for SQLite, "%s" for Postgres
+    init_schema(conn)             -> create tables idempotently
+    bulk_insert_ignore_conflicts  -> backend-aware bulk insert
 """
 from __future__ import annotations
 
@@ -21,7 +17,7 @@ import logging
 import os
 import sqlite3
 from contextlib import contextmanager
-from typing import Iterable, Iterator, Sequence
+from typing import Iterable, Iterator, Optional, Sequence
 
 from dotenv import load_dotenv
 
@@ -35,7 +31,7 @@ log = logging.getLogger("db")
 
 
 # Backend selection
-def _raw_database_url() -> str | None:
+def _raw_database_url() -> Optional[str]:
     url = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL")
     if url and url.strip():
         return url.strip()
@@ -164,22 +160,6 @@ CREATE TABLE IF NOT EXISTS merchant_features (
 );
 """
 
-
-def init_schema(conn) -> None:
-    """Create the three Argos tables if they don't already exist.
-
-    On Postgres we assume the user ran `schema.sql` via the Supabase SQL
-    editor. We still issue idempotent CREATE TABLE IF NOT EXISTS here so
-    fresh dev environments don't have to remember the manual step.
-    """
-    if using_postgres():
-        with conn.cursor() as cur:
-            cur.execute(_POSTGRES_SCHEMA)
-        conn.commit()
-    else:
-        conn.executescript(_SQLITE_SCHEMA)
-
-
 _POSTGRES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS raw_transactions (
     id                SERIAL PRIMARY KEY,
@@ -221,6 +201,17 @@ CREATE TABLE IF NOT EXISTS merchant_features (
     updated_at                  DOUBLE PRECISION
 );
 """
+
+
+def init_schema(conn) -> None:
+    """Create the Argos tables if they don't already exist.
+    """
+    if using_postgres():
+        with conn.cursor() as cur:
+            cur.execute(_POSTGRES_SCHEMA)
+        conn.commit()
+    else:
+        conn.executescript(_SQLITE_SCHEMA)
 
 
 # Bulk insert helper

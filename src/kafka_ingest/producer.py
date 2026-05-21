@@ -119,7 +119,8 @@ def main() -> None:
         if args.sleep and sent % args.batch_size == 0:
             time.sleep(args.sleep)
 
-
+    # Flush the residual window so the post-flush block isn't credited with
+    # send-loop work (that dilutes the rate by the flush wait time).
     now = time.perf_counter()
     if sent > last_sent:
         window = now - last_tick

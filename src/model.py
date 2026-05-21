@@ -1,7 +1,4 @@
-"""PyTorch fraud classifier. Same architecture as the production target in
-PROJECT.md so we don't have to retrain when we upgrade the surrounding
-infra.
-"""
+"""PyTorch fraud classifier (MLP with BatchNorm + Dropout)."""
 from __future__ import annotations
 
 import torch
@@ -31,5 +28,5 @@ class FraudDetector(nn.Module):
 
     @torch.no_grad()
     def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
-        """Sigmoid over logits. Caller must ensure model is in eval mode."""
+        self.eval()
         return torch.sigmoid(self.forward(x))

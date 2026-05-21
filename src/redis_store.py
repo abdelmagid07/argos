@@ -1,11 +1,11 @@
 """Redis-backed online feature store.
 
-Keys (set by `src.sync_to_redis`):
-    user:{user_id}:features         HASH of feature_name -> stringified value
-    merchant:{merchant_id}:features HASH of feature_name -> stringified value
-    argos:meta                      HASH with sync metadata
+Keys (populated by :mod:`src.sync_to_redis`):
+    user:{user_id}:features          HASH of feature_name -> stringified value
+    merchant:{merchant_id}:features  HASH of feature_name -> stringified value
+    argos:meta                       HASH with sync metadata (counts + timestamp)
 
-Miss policy: returns {} on miss (same contract as InMemoryFeatureStore).
+Miss policy: returns ``{}``, matching ``InMemoryFeatureStore``.
 """
 from __future__ import annotations
 
@@ -35,8 +35,7 @@ class RedisFeatureStore:
         self._url = url
         log.info("RedisFeatureStore connected to %s", url)
 
-    # lookups 
-
+    # Lookups
     def get_user_features(self, user_id: int) -> dict:
         data = self.client.hgetall(USER_KEY_FMT.format(int(user_id)))
         return self._coerce(data)
@@ -47,7 +46,7 @@ class RedisFeatureStore:
 
     @staticmethod
     def _coerce(data: dict[str, str]) -> dict:
-        """Redis HGETALL returns all-strings; serve.py expects numerics."""
+        """Convert Redis-string values to float where possible."""
         out: dict = {}
         for k, v in data.items():
             try:
@@ -56,8 +55,7 @@ class RedisFeatureStore:
                 out[k] = v
         return out
 
-    # introspection (used by /health) 
-
+    # Introspection (consumed by /health)
     def _meta(self) -> dict[str, str]:
         try:
             return self.client.hgetall(META_KEY) or {}
