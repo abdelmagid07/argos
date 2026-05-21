@@ -5,29 +5,38 @@ Run:
     uvicorn src.serve:app --port 8000 --workers 4   # scale across cores
 
 Endpoints:
-    GET  /health   liveness + feature-store status
-    POST /predict  fraud score for a single transaction
-    GET  /stats    rolling counters, latency percentiles, in-flight gauge
+    GET  /health                 Liveness + feature-store status.
+    POST /predict                Score a single transaction.
+    GET  /predict?timings=1      Adds ``breakdown_ms`` (feature lookup, prep,
+                                 scaler, model) for client-side timing.
+    GET  /stats                  Rolling counters, latency percentiles,
+                                 in-flight gauge.
+    GET  /features/{user_id}     Cached per-user features (404 on miss).
+    GET  /merchants/{merchant_id} Cached per-merchant features.
+    GET  /sample_keys?n=50       Random (user_id, merchant_id) pairs that
+                                 exist in the offline store; powers the UI
+                                 dropdowns without leaking the full ID list.
+    GET  /ui                     Static demo page (served when ``web/`` is
+                                 present alongside the source tree).
 
-Diagnostics under load:
-    GET  /stats                  ``in_flight.current`` / ``max_since_boot``
-                                 reveal ASGI thread-pool saturation.
-    POST /predict?timings=1      Adds ``breakdown_ms`` (feature lookup, prep,
-                                 scaler, model) so you can localize hot spots.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import pickle
 import threading
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 import torch
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -164,6 +173,24 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Argos Fraud Detection (MVP)", lifespan=lifespan)
 app.add_middleware(_InFlightMiddleware)
 
+_cors_origins = [
+    o.strip()
+    for o in os.getenv("ARGOS_CORS_ALLOW_ORIGINS", "*").split(",")
+    if o.strip()
+] or ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+# Mount the bundled demo UI at /ui if web/index.html ships alongside src/.
+_WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+if (_WEB_DIR / "index.html").is_file():
+    app.mount("/ui", StaticFiles(directory=str(_WEB_DIR), html=True), name="ui")
+    log.info("Static UI mounted at /ui from %s", _WEB_DIR)
+
 
 def _risk_label(score: float) -> str:
     if score > 0.7:
@@ -252,6 +279,48 @@ def predict(
         used_merchant_features=bool(merchant_feats),
         breakdown_ms=bd,
     )
+
+
+@app.get("/features/{user_id}")
+def get_user_features(user_id: int) -> dict:
+    """Return cached per-user features, or 404 if unknown."""
+    if STATE.store is None:
+        raise HTTPException(503, "Feature store not loaded")
+    feats = STATE.store.get_user_features(user_id)
+    if not feats:
+        raise HTTPException(404, f"No features for user_id={user_id}")
+    return {"user_id": user_id, "features": feats}
+
+
+@app.get("/merchants/{merchant_id}")
+def get_merchant_features(merchant_id: int) -> dict:
+    """Return cached per-merchant features, or 404 if unknown."""
+    if STATE.store is None:
+        raise HTTPException(503, "Feature store not loaded")
+    feats = STATE.store.get_merchant_features(merchant_id)
+    if not feats:
+        raise HTTPException(404, f"No features for merchant_id={merchant_id}")
+    return {"merchant_id": merchant_id, "features": feats}
+
+
+@app.get("/sample_keys")
+def sample_keys(n: int = Query(50, ge=1, le=500)) -> dict:
+    """Return ``n`` real ``(user_id, merchant_id)`` pairs from the offline DB.
+
+    Powers the UI dropdowns so users see warm-path examples without us
+    leaking the full ID space. Falls back to an empty list when the offline
+    DB is unavailable; callers should treat it as best-effort.
+    """
+    try:
+        from src.smoke_test import sample_real_keys
+        pairs = sample_real_keys(n)
+    except Exception as e:  # pragma: no cover - best-effort helper
+        log.warning("sample_keys: DB sampling failed: %s", e)
+        pairs = []
+    return {
+        "count": len(pairs),
+        "pairs": [{"user_id": int(u), "merchant_id": int(m)} for u, m in pairs],
+    }
 
 
 @app.get("/stats")

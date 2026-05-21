@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Argos — Fraud Scoring Demo</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #161922;
+      --panel-2: #1d2230;
+      --border: #262b3a;
+      --text: #e8ecf3;
+      --muted: #8c93a3;
+      --accent: #7aa2ff;
+      --good: #4ade80;
+      --warn: #facc15;
+      --bad: #f87171;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    a { color: var(--accent); text-decoration: none; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 24px; border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #131722, #0f1115);
+    }
+    header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .2px; }
+    header h1 span { color: var(--muted); font-weight: 400; margin-left: 6px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+      border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border);
+      font-size: 12px; color: var(--muted);
+    }
+    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .pill.ok    .dot { background: var(--good); }
+    .pill.warn  .dot { background: var(--warn); }
+    .pill.error .dot { background: var(--bad);  }
+
+    main {
+      display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px;
+      padding: 20px 24px; max-width: 1200px; margin: 0 auto;
+    }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+    .panel {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 18px;
+    }
+    .panel h2 {
+      margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .8px;
+      text-transform: uppercase; color: var(--muted);
+    }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    input, select, button {
+      width: 100%; padding: 10px 12px; background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; font-size: 14px;
+      font-family: inherit;
+    }
+    button {
+      cursor: pointer; background: var(--accent); color: #0b0f1a;
+      border-color: var(--accent); font-weight: 600; margin-top: 14px;
+    }
+    button:disabled { opacity: .6; cursor: progress; }
+
+    .score-card {
+      display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: center;
+      margin-top: 12px;
+    }
+    .score-circle {
+      width: 96px; height: 96px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 700; color: #0b0f1a;
+      background: var(--muted); transition: background .2s;
+    }
+    .score-circle.low    { background: var(--good); }
+    .score-circle.medium { background: var(--warn); }
+    .score-circle.high   { background: var(--bad);  }
+
+    .meta { font-size: 13px; color: var(--muted); line-height: 1.6; }
+    .meta b { color: var(--text); font-weight: 600; }
+
+    .breakdown { margin-top: 14px; }
+    .breakdown .row {
+      display: grid; grid-template-columns: 120px 1fr 70px; gap: 10px;
+      align-items: center; font-size: 12px; margin-bottom: 6px;
+    }
+    .breakdown .bar-bg {
+      height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden;
+    }
+    .breakdown .bar { height: 100%; background: var(--accent); }
+    .breakdown .val { font-family: var(--mono); color: var(--muted); text-align: right; }
+
+    table.kv { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.kv td { padding: 6px 0; border-bottom: 1px dashed var(--border); }
+    table.kv td:first-child { color: var(--muted); }
+    table.kv td:last-child  { font-family: var(--mono); text-align: right; }
+    table.kv tr:last-child td { border-bottom: none; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .stat {
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .stat .val { font-family: var(--mono); font-size: 18px; margin-top: 4px; }
+
+    .empty { color: var(--muted); font-size: 13px; padding: 14px 0; text-align: center; }
+    .error { color: var(--bad); font-size: 13px; margin-top: 10px; }
+    footer { text-align: center; font-size: 12px; color: var(--muted); padding: 18px 0 30px; }
+    code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Argos <span>fraud scoring demo</span></h1>
+    <span id="health-pill" class="pill"><span class="dot"></span><span id="health-text">connecting…</span></span>
+  </header>
+
+  <main>
+    <!-- Left column: form + result -->
+    <section class="panel">
+      <h2>Score a transaction</h2>
+      <div class="form-grid">
+        <div>
+          <label for="user-select">User</label>
+          <select id="user-select"><option>Loading…</option></select>
+        </div>
+        <div>
+          <label for="merchant-select">Merchant</label>
+          <select id="merchant-select"><option>Loading…</option></select>
+        </div>
+        <div>
+          <label for="amount-input">Amount (USD)</label>
+          <input id="amount-input" type="number" min="1" step="0.01" value="250.00" />
+        </div>
+        <div>
+          <label for="random-btn" style="visibility: hidden">Resample</label>
+          <button id="random-btn" type="button" style="background: var(--panel-2); color: var(--text); border-color: var(--border); margin-top: 0;">
+            Pick random pair
+          </button>
+        </div>
+      </div>
+      <button id="score-btn" type="button">Score transaction</button>
+      <div id="form-error" class="error"></div>
+
+      <div id="result" style="display: none;">
+        <div class="score-card">
+          <div id="score-circle" class="score-circle low">--</div>
+          <div class="meta">
+            risk: <b id="risk-label">—</b><br />
+            model: <b id="model-version">—</b><br />
+            server latency: <b id="latency-ms">—</b> ms<br />
+            features used: <b id="features-used">—</b>
+          </div>
+        </div>
+
+        <div class="breakdown" id="breakdown"></div>
+      </div>
+    </section>
+
+    <!-- Right column: features + live stats -->
+    <section>
+      <div class="panel" style="margin-bottom: 16px;">
+        <h2>User features <span id="user-features-id" style="color: var(--muted); font-weight: 400;"></span></h2>
+        <div id="user-features"><div class="empty">Pick a user to load their features.</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>Live stats <span style="color: var(--muted); font-weight: 400;">/stats · polled every 3s</span></h2>
+        <div class="stats-grid" style="margin-bottom: 12px;">
+          <div class="stat"><div class="lbl">p50</div><div class="val" id="stat-p50">—</div></div>
+          <div class="stat"><div class="lbl">p95</div><div class="val" id="stat-p95">—</div></div>
+          <div class="stat"><div class="lbl">p99</div><div class="val" id="stat-p99">—</div></div>
+        </div>
+        <table class="kv" id="stat-counters"></table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Argos · open <a href="/docs" target="_blank">API docs</a> ·
+    <code>POST /predict</code> · <code>GET /stats</code>
+  </footer>
+
+  <script>
+    // The UI is served from the API itself, so same-origin works.
+    // If you ever serve the UI separately, set `API_BASE` to the API URL.
+    const API_BASE = (window.ARGOS_API_BASE || "").replace(/\/$/, "");
+    const api = (path) => `${API_BASE}${path}`;
+
+    const el = (id) => document.getElementById(id);
+
+    async function fetchJson(path, opts) {
+      const r = await fetch(api(path), opts);
+      if (!r.ok) {
+        let msg = `${r.status} ${r.statusText}`;
+        try { const j = await r.json(); if (j.detail) msg += ` — ${j.detail}`; } catch (_) {}
+        throw new Error(msg);
+      }
+      return r.json();
+    }
+
+    // ---------- health pill ----------
+    async function refreshHealth() {
+      const pill = el("health-pill");
+      const text = el("health-text");
+      try {
+        const h = await fetchJson("/health");
+        pill.className = "pill ok";
+        text.textContent = `${h.feature_store} · ${h.users_in_store} users · ${h.merchants_in_store} merchants`;
+      } catch (e) {
+        pill.className = "pill error";
+        text.textContent = "API unreachable";
+      }
+    }
+
+    // ---------- sample dropdowns ----------
+    let pairs = [];
+    async function loadSamples() {
+      const userSel = el("user-select");
+      const merchSel = el("merchant-select");
+      try {
+        const data = await fetchJson("/sample_keys?n=200");
+        pairs = data.pairs || [];
+        if (!pairs.length) {
+          userSel.innerHTML = '<option value="1">1 (cold-start)</option>';
+          merchSel.innerHTML = '<option value="1">1 (cold-start)</option>';
+          return;
+        }
+        const users = [...new Set(pairs.map(p => p.user_id))];
+        const merchants = [...new Set(pairs.map(p => p.merchant_id))];
+        userSel.innerHTML  = users.map(u => `<option value="${u}">${u}</option>`).join("");
+        merchSel.innerHTML = merchants.map(m => `<option value="${m}">${m}</option>`).join("");
+        loadUserFeatures(userSel.value);
+      } catch (e) {
+        userSel.innerHTML  = '<option value="1">1 (cold-start)</option>';
+        merchSel.innerHTML = '<option value="1">1 (cold-start)</option>';
+      }
+    }
+
+    // ---------- user features panel ----------
+    async function loadUserFeatures(userId) {
+      const host = el("user-features");
+      const idLabel = el("user-features-id");
+      idLabel.textContent = userId ? `· user_id=${userId}` : "";
+      host.innerHTML = '<div class="empty">Loading…</div>';
+      try {
+        const data = await fetchJson(`/features/${userId}`);
+        const f = data.features || {};
+        const keys = Object.keys(f).sort();
+        if (!keys.length) {
+          host.innerHTML = '<div class="empty">No features cached for this user.</div>';
+          return;
+        }
+        host.innerHTML = `<table class="kv">${
+          keys.map(k => `<tr><td>${k}</td><td>${fmtNum(f[k])}</td></tr>`).join("")
+        }</table>`;
+      } catch (e) {
+        host.innerHTML = `<div class="empty">${e.message}</div>`;
+      }
+    }
+
+    function fmtNum(v) {
+      if (typeof v === "number") {
+        if (Number.isInteger(v)) return v.toString();
+        return v.toFixed(4);
+      }
+      return v == null ? "—" : String(v);
+    }
+
+    // ---------- scoring ----------
+    async function scoreTxn() {
+      const btn = el("score-btn");
+      const err = el("form-error");
+      err.textContent = "";
+      btn.disabled = true;
+      btn.textContent = "Scoring…";
+      try {
+        const body = {
+          user_id: parseInt(el("user-select").value, 10),
+          merchant_id: parseInt(el("merchant-select").value, 10),
+          amount: parseFloat(el("amount-input").value),
+        };
+        const r = await fetchJson("/predict?timings=1", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        renderResult(r);
+      } catch (e) {
+        err.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Score transaction";
+      }
+    }
+
+    function renderResult(r) {
+      el("result").style.display = "block";
+      const circle = el("score-circle");
+      circle.className = `score-circle ${r.risk_label}`;
+      circle.textContent = (r.fraud_score * 100).toFixed(1) + "%";
+
+      el("risk-label").textContent = r.risk_label;
+      el("model-version").textContent = r.model_version;
+      el("latency-ms").textContent = r.latency_ms.toFixed(2);
+      el("features-used").textContent =
+        `user=${r.used_user_features ? "yes" : "no"}, merchant=${r.used_merchant_features ? "yes" : "no"}`;
+
+      const bd = r.breakdown_ms || {};
+      const entries = Object.entries(bd);
+      const host = el("breakdown");
+      if (!entries.length) { host.innerHTML = ""; return; }
+      const max = Math.max(...entries.map(([_, v]) => v), 0.001);
+      host.innerHTML = `
+        <div style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px;">server breakdown (ms)</div>
+        ${entries.map(([k, v]) => `
+          <div class="row">
+            <div>${k}</div>
+            <div class="bar-bg"><div class="bar" style="width: ${(v / max * 100).toFixed(1)}%;"></div></div>
+            <div class="val">${v.toFixed(2)}</div>
+          </div>`).join("")}`;
+    }
+
+    // ---------- live stats ----------
+    async function refreshStats() {
+      try {
+        const s = await fetchJson("/stats");
+        const lat = s.latency_ms || {};
+        el("stat-p50").textContent = lat.p50 == null ? "—" : `${lat.p50.toFixed(1)} ms`;
+        el("stat-p95").textContent = lat.p95 == null ? "—" : `${lat.p95.toFixed(1)} ms`;
+        el("stat-p99").textContent = lat.p99 == null ? "—" : `${lat.p99.toFixed(1)} ms`;
+
+        const c = s.counters || {};
+        const flight = s.in_flight || {};
+        const rows = [
+          ["total scored",      c.total ?? 0],
+          ["low / medium / high", `${c.low ?? 0} · ${c.medium ?? 0} · ${c.high ?? 0}`],
+          ["missing user feats",  c.missing_user_features ?? 0],
+          ["missing merch feats", c.missing_merchant_features ?? 0],
+          ["in-flight (now / max)", `${flight.current ?? 0} / ${flight.max_since_boot ?? 0}`],
+        ];
+        el("stat-counters").innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+      } catch (_) { /* health pill already covers this */ }
+    }
+
+    // ---------- wire-up ----------
+    el("score-btn").addEventListener("click", scoreTxn);
+    el("user-select").addEventListener("change", (e) => loadUserFeatures(e.target.value));
+    el("random-btn").addEventListener("click", () => {
+      if (!pairs.length) return;
+      const p = pairs[Math.floor(Math.random() * pairs.length)];
+      el("user-select").value = p.user_id;
+      el("merchant-select").value = p.merchant_id;
+      loadUserFeatures(p.user_id);
+    });
+
+    refreshHealth();
+    loadSamples();
+    refreshStats();
+    setInterval(refreshHealth, 5000);
+    setInterval(refreshStats, 3000);
+  </script>
+</body>
+</html>

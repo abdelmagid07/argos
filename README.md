@@ -12,6 +12,7 @@ on Kubernetes.
 - **Online features** — in-memory by default; one env var swaps to Redis.
 - **Ingest** — batch CSV or Kafka (producer → topic → consumer → DB).
 - **Serving** — FastAPI with `/predict`, `/health`, `/stats`, optional per-request timing breakdown.
+- **Demo UI** — zero-dependency static page served from the API at `/ui` for poking at the model in a browser.
 - **Operability** — Dockerfile (non-root, healthcheck), `docker-compose.yml`, Kubernetes manifests with HPA.
 
 ---
@@ -178,6 +179,7 @@ optional — the defaults run end-to-end on SQLite + the in-memory feature store
 | `REDIS_URL` | e.g. `redis://localhost:6380` (Compose maps 6379 → 6380 on the host). |
 | `KAFKA_BOOTSTRAP_SERVERS` | Comma-separated brokers; default `localhost:9092`. |
 | `KAFKA_TOPIC` / `KAFKA_DLQ_TOPIC` / `KAFKA_GROUP_ID` | Topic + consumer-group names. |
+| `ARGOS_CORS_ALLOW_ORIGINS` | Comma-separated origins allowed by the API. Default `*` (demo UI). |
 
 For Postgres, run [`schema.sql`](schema.sql) in the SQL editor or rely on
 `init_schema` (it issues idempotent `CREATE TABLE IF NOT EXISTS` on first run).
@@ -258,8 +260,12 @@ template — do not apply it with real credentials committed. Use
 | `GET` | `/health` | Liveness probe; reports feature-store backend and counts. |
 | `POST` | `/predict` | `{user_id, merchant_id, amount}` → fraud score + risk label. |
 | `POST` | `/predict?timings=1` | Adds `breakdown_ms` (features, prep, scaler, model). |
+| `GET` | `/features/{user_id}` | Cached per-user features (404 if unknown). |
+| `GET` | `/merchants/{merchant_id}` | Cached per-merchant features. |
+| `GET` | `/sample_keys?n=50` | Random `(user_id, merchant_id)` pairs from the offline DB. |
 | `GET` | `/stats` | Rolling counters, latency p50/p95/p99, in-flight gauge. |
 | `GET` | `/docs` | Auto-generated Swagger UI. |
+| `GET` | `/ui` | Static demo dashboard (see below). |
 
 ```bash
 curl -s -X POST http://localhost:8000/predict \
@@ -277,6 +283,23 @@ curl -s -X POST http://localhost:8000/predict \
   "used_merchant_features": true
 }
 ```
+
+### Demo UI
+
+With the API running, open <http://localhost:8000/ui> in a browser. The page is
+a single, dependency-free HTML file ([`web/index.html`](web/index.html)) that:
+
+- pre-fills `user_id` / `merchant_id` dropdowns from `GET /sample_keys` so you
+  exercise the warm path, not just cold-start;
+- shows the model's `fraud_score`, `risk_label`, and a per-stage server
+  latency breakdown from `POST /predict?timings=1`;
+- displays the cached features for the selected user via `GET /features/{user_id}`;
+- polls `GET /stats` every few seconds and renders live p50 / p95 / p99 latency
+  plus in-flight and missing-feature counters.
+
+CORS defaults to `*` so the page also works when served from a separate origin
+(e.g. Vercel/Netlify) during development; lock it down with
+`ARGOS_CORS_ALLOW_ORIGINS=https://your.app` in production.
 
 ---
 
@@ -297,6 +320,7 @@ curl -s -X POST http://localhost:8000/predict \
 │   ├── smoke_test.py                 # End-to-end latency + score sanity check
 │   ├── config.py
 │   └── kafka_ingest/                 # Producer, consumer, idempotent topic bootstrap
+├── web/                              # Static demo UI served at /ui
 ├── data/                             # CSV inputs (gitignored)
 └── models/                           # Trained weights + scaler (gitignored)
 ```
@@ -309,38 +333,6 @@ curl -s -X POST http://localhost:8000/predict \
 - **End-to-end:** `python run_all.py` (or `--no-server` for ETL only)
 - **Container hygiene:** Dockerfile installs the CPU-only PyTorch wheel, runs
   as a non-root user, and ships a small `urllib`-based healthcheck.
-
----
-
-## Security &amp; limitations
-
-- **Secrets**: keep them in `.env` locally and in Kubernetes Secrets
-  in-cluster. Never commit `.env`, database URLs, or API keys.
-- **Local infra is unauthenticated**: the bundled Redis and Kafka run with no
-  auth or TLS — appropriate for local learning only. Use managed services
-  (or TLS + auth) anywhere outside `localhost`.
-- **`/predict` runs synchronously** (CPU-bound PyTorch inference). Scale with
-  `uvicorn --workers N` to match cores; the in-memory feature store loads a
-  copy per worker, so size RAM accordingly.
-- **The Kafka pipeline is idempotent end-to-end for natural keys**
-  (idempotent producer, manual consumer offset commits, and
-  `INSERT … ON CONFLICT DO NOTHING` in the sink), not full Kafka EOS
-  transactions.
-
----
-
-## Roadmap
-
-| Stage | Status |
-|-------|--------|
-| MVP (SQLite, in-memory serve) | Done |
-| Postgres / Supabase | Done |
-| Redis online store | Done |
-| Kafka ingest (idempotent producer, DLQ, manual commits) | Done |
-| Docker image (non-root, healthcheck) | Done |
-| Kubernetes manifests + HPA | Done |
-| Async `/predict` + `redis.asyncio` for I/O-bound paths | Deferred |
-| Spark batch features | Deferred (pandas is sufficient at MVP scale) |
 
 ---
 

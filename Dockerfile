@@ -22,8 +22,9 @@ COPY requirements.txt ./
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch \
  && pip install -r requirements.txt
 
-# Application code and trained artifacts.
+# Application code, demo UI, and trained artifacts.
 COPY src/ ./src/
+COPY web/ ./web/
 COPY models/fraud_detector_v1.pt \
      models/scaler.pkl \
      models/feature_columns.json \
